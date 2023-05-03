@@ -1,111 +1,11 @@
-let canvas = document.getElementById("canvas");
-let ctx = canvas.getContext("2d");
-
 objects = [];
 bodyCount = 0;
 
+currentType = "Circle";
+
 physicsQueue = [];
 
-EPSILON = 0.0005;
-
-class Vec2 {
-  //Vector class
-
-  x;
-  y;
-  constructor(x, y) {
-    this.x = x;
-    this.y = y;
-  }
-
-  mult(k) {
-    return new Vec2(this.x * k, this.y * k);
-  }
-
-  add(vecB) {
-    return new Vec2(this.x + vecB.x, this.y + vecB.y);
-  }
-
-  subtract(vecB) {
-    return new Vec2(this.x - vecB.x, this.y - vecB.y);
-  }
-
-  len() {
-    return Math.sqrt(this.x ** 2 + this.y ** 2);
-  }
-
-  normal() {
-    return new Vec2(-this.y, this.x);
-  }
-
-  normalize() {
-    if (this.x == 0 && this.y == 0) {
-      return new Vec2(0, 0);
-    }
-    let hypo = Math.sqrt(this.x ** 2 + this.y ** 2);
-
-    return new Vec2(this.x / hypo, this.y / hypo);
-  }
-}
-
-function CrossProduct(a, b) {
-  return a.x * b.y - a.y * b.x;
-}
-
-function CrossProductF_V(a, b) {
-  return new Vec2(-a * b.y, a * b.x);
-}
-
-function CrossProductV_F(a, b) {
-  return new Vec2(b * a.y, -b * a.x);
-}
-
-function rotationMat(rad) {
-  return [
-    [Math.cos(rad), -Math.sin(rad)],
-    [Math.sin(rad), Math.cos(rad)],
-  ];
-}
-
-function MATxVEC2(Matrix, Vector) {
-  return new Vec2(
-    Matrix[0][0] * Vector.x + Matrix[0][1] * Vector.y,
-    Matrix[1][0] * Vector.x + Matrix[1][1] * Vector.y
-  );
-}
-
-function MAT22xMAT22(MatrixA, MatrixB) {
-  returnMatrix = [];
-  for (let i = 0; i < MatrixA.length; i++) {
-    returnMatrix.push([]);
-
-    for (let j = 0; j < MatrixB[0].length; j++) {
-      returnMatrix[i].push([]);
-    }
-  }
-
-  for (let i = 0; i < MatrixA.length; i++) {
-    for (let j = 0; j < MatrixB[0].length; j++) {
-      returnMatrix[i][j] = 0;
-      for (let k = 0; k < MatrixA[0].length; k++) {
-        returnMatrix[i][j] += MatrixA[i][k] * MatrixB[k][j];
-      }
-    }
-  }
-  return returnMatrix;
-}
-
-function translateMat(Mat22, transVector) {
-  returnMatrix = [];
-  for (let i = 0; i < Mat22.length; i++) {
-    returnMatrix.push([
-      Mat22[i][0] + transVector.x,
-      Mat22[i][1] + transVector.y,
-    ]);
-  }
-
-  return returnMatrix;
-}
+EPSILON = 0.0;
 
 class mass_data {
   mass;
@@ -114,14 +14,7 @@ class mass_data {
   inertia = 5;
   inverse_inertia = 0.01;
 
-  constructor(_mass) {
-    this.mass = _mass;
-    if (this.mass == 0) {
-      this.inv_mass = 0;
-    } else {
-      this.inv_mass = 1 / _mass;
-    }
-  }
+  constructor() {}
 }
 
 class material_data {
@@ -163,29 +56,40 @@ class transform_data {
   rotation = 0;
 }
 
-class body {
+class rigidbody {
   id;
   shape;
   transform = new transform_data();
+
   material;
   mass_data;
   linearVelocity = new Vec2();
   force = new Vec2(0, 0);
+
+  type;
 
   angularVelocity = 0;
   torque = 0;
 
   gravityScale;
 
-  constructor(_shape, _x, _y, _material, _mass) {
+  constructor(_shape, _x, _y, _material, type, parent) {
     this.id = bodyCount;
     bodyCount++;
+
+    if (this.parent) {
+      this.parent = parent;
+    }
+
+    this.type = type;
 
     this.shape = _shape;
     this.transform.position.x = _x;
     this.transform.position.y = _y;
     this.material = new material_data(_material);
-    this.mass_data = new mass_data(_mass);
+
+    this.mass_data = new mass_data();
+    calculateMass_data(this);
     this.linearVelocity = new Vec2(0, 0);
 
     objects.push(this);
@@ -209,7 +113,7 @@ class body {
     }
 
     this.linearVelocity = this.linearVelocity.add(
-      this.force.mult(this.mass_data.inv_mass * dt)
+      this.force.mult(this.mass_data.inv_mass * 1 * dt)
     );
 
     this.angularVelocity += this.torque * this.mass_data.inverse_inertia * dt;
@@ -218,7 +122,11 @@ class body {
       this.linearVelocity.mult(dt)
     );
 
-    this.transform.rotation += this.angularVelocity * dt;
+    if (this.shape.type == "Circle") {
+      this.transform.rotation += this.angularVelocity * dt * -1;
+    } else {
+      this.transform.rotation += this.angularVelocity * dt;
+    }
 
     this.force = new Vec2(0, 0);
   }
@@ -231,13 +139,13 @@ class body {
 class Circle {
   type = "Circle";
   radius;
-  frictionCoefficientStatic = 0.001;
-  frictionCoefficientDynamic = 0.001;
+  frictionCoefficientStatic = 0.1;
+  frictionCoefficientDynamic = 0.1;
   constructor(_radius) {
     this.radius = _radius;
   }
   draw(_position, rotation) {
-    ctx.strokeStyle = "black";
+    ctx.strokeStyle = "#6f3d2d";
     ctx.beginPath();
     ctx.arc(_position.x, _position.y, this.radius, 0, 2 * Math.PI);
     ctx.stroke();
@@ -252,27 +160,32 @@ class Circle {
   }
 }
 
+function scaleMatrix(K, Matrix) {
+  for (let i = 0; i < Matrix.length; i++) {
+    for (let j = 0; j < Matrix[i].length; j++) {
+      Matrix[i][j] *= K;
+    }
+  }
+}
+
 class OBB {
   type = "OBB";
   min = new Vec2();
   max = new Vec2();
-  frictionCoefficientStatic = 0.6;
-  frictionCoefficientDynamic = 0.4;
+  frictionCoefficientStatic = 0.9;
+  frictionCoefficientDynamic = 0.6;
 
   size = { x: 0, y: 0 };
 
   vertices;
 
-  constructor(sizeX, sizeY) {
-    this.size.x = sizeX;
-    this.size.y = sizeY;
+  constructor(vertices, scaling) {
+    {
+      this.vertices = vertices;
+      scaleMatrix(scaling, this.vertices);
 
-    this.vertices = [
-      [-this.size.x, -this.size.y],
-      [this.size.x, -this.size.y],
-      [this.size.x, this.size.y],
-      [-this.size.x, this.size.y],
-    ];
+      this.vertices = mirrorMatrix(this.vertices);
+    }
   }
 
   draw(_position, _rotation) {
@@ -281,20 +194,130 @@ class OBB {
       _position
     );
 
-    ctx.strokeStyle = "black";
+    ctx.strokeStyle = "#6f3d2d";
     ctx.beginPath();
-    ctx.moveTo(translatedVertices[0][0], translatedVertices[0][1]);
-    ctx.lineTo(translatedVertices[1][0], translatedVertices[1][1]);
-    ctx.lineTo(translatedVertices[2][0], translatedVertices[2][1]);
-    ctx.lineTo(translatedVertices[3][0], translatedVertices[3][1]);
-    ctx.lineTo(translatedVertices[0][0], translatedVertices[0][1]);
+    for (let i = -1; i < translatedVertices.length; i++) {
+      ctx.lineTo(
+        translatedVertices[(i + 1) % translatedVertices.length][0],
+        translatedVertices[(i + 1) % translatedVertices.length][1]
+      );
+    }
     ctx.stroke();
   }
 }
 
-// function calculateMass(Body) {
+function breakObject(Body) {
+  let vertices = (Body.shape.vertices, rotationMat(Body.transform.rotation));
 
-// }
+  console.log(vertices);
+
+  for (let i = 0; i < vertices.length; i++) {
+    vertex_A = new Vec2(vertices[i][0], vertices[i][1]);
+    vertex_B = new Vec2(
+      vertices[(i + 1) % vertices.length][0],
+      vertices[(i + 1) % vertices.length][1]
+    );
+
+    COM = new Vec2(0, 0);
+
+    position = new Vec2(
+      (vertex_A.x + vertex_B.x + COM.x) / 3,
+      (vertex_A.y + vertex_B.y + COM.y) / 3
+    );
+
+    new rigidbody(
+      new OBB(
+        [
+          [vertex_A.x, vertex_A.y],
+          [vertex_B.x, vertex_B.y],
+          [COM.x, COM.y],
+        ],
+        15
+      ),
+      position.x + Body.transform.position.x,
+      position.y + Body.transform.position.y,
+      "Rock",
+      "box"
+    );
+  }
+}
+
+function calculateMass_data(Body) {
+  if (Body.shape.type == "Circle") {
+    Body.mass_data.mass = Math.PI * Body.shape.radius ** 2;
+    Body.mass_data.mass /= 10 ** 2;
+    Body.mass_data.inertia = Body.mass_data.mass * Body.shape.radius ** 2;
+
+    if (Body.mass_data.mass == 0) {
+      Body.mass_data.inv_mass = 0;
+    } else {
+      Body.mass_data.inv_mass = 1 / Body.mass_data.mass;
+    }
+
+    if (Body.mass_data.inertia == 0) {
+      Body.mass_data.inverse_inertia = 0;
+    } else {
+      Body.mass_data.inverse_inertia = 1 / Body.mass_data.inertia;
+    }
+  }
+  if (Body.shape.type == "OBB") {
+    vertices = Body.shape.vertices;
+    COM = new Vec2(0, 0);
+    let total_area = 0;
+    let inertia = 0;
+    let mass = 0;
+    for (let i = 0; i < vertices.length; i++) {
+      vertex_A = new Vec2(vertices[i][0], vertices[i][1]);
+      vertex_B = new Vec2(
+        vertices[(i + 1) % vertices.length][0],
+        vertices[(i + 1) % vertices.length][1]
+      );
+      triangle_area = 0.5 * Math.abs(CrossProduct(vertex_A, vertex_B));
+      mass_triangle = (Body.material.density * triangle_area) / 10 ** 2;
+
+      inertia_triangle =
+        (mass_triangle *
+          (vertex_A.sqrLen() +
+            vertex_B.sqrLen() +
+            DotProduct(vertex_A, vertex_B))) /
+        6;
+      total_area += triangle_area;
+      mass += mass_triangle;
+      inertia += inertia_triangle;
+    }
+
+    // Find center of mass
+
+    for (let i = 0; i < vertices.length; i++) {
+      vertex_A = new Vec2(vertices[i][0], vertices[i][1]);
+      vertex_B = new Vec2(
+        vertices[(i + 1) % vertices.length][0],
+        vertices[(i + 1) % vertices.length][1]
+      );
+      triangle_area = 0.5 * Math.abs(CrossProduct(vertex_A, vertex_B));
+      COM = COM.add(
+        vertex_A.add(vertex_B).mult(triangle_area / (3 * total_area))
+      );
+    }
+
+    Body.shape.vertices = translateMat(vertices, COM.mult(-1));
+
+    Body.mass_data.mass = mass;
+    if (Body.mass_data.mass == 0) {
+      Body.mass_data.inv_mass = 0;
+    } else {
+      Body.mass_data.inv_mass = 1 / mass;
+    }
+
+    Body.mass_data.inertia = inertia;
+
+    if (Body.mass_data.inertia == 0) {
+      Body.mass_data.inverse_inertia = 0;
+    } else {
+      Body.mass_data.inverse_inertia = 1 / Body.mass_data.inertia;
+    }
+  }
+}
 
 function CirclevsCircle(_M) {
   let _A = _M.A;
@@ -315,89 +338,10 @@ function CirclevsCircle(_M) {
 
   normalLength = Math.sqrt(normalLengthSqrd);
 
-  M.penetrationDepth = totalRadius - normalLength;
+  _M.penetrationDepth = totalRadius - normalLength;
 
-  M.normal = normal.normalize();
+  _M.normal = normal.normalize();
 
-  ctx.strokeStyle = "red";
-
-  ctx.beginPath();
-  ctx.moveTo(
-    M.normal.x * _A.shape.radius + _A.transform.position.x,
-    M.normal.y * _A.shape.radius + _A.transform.position.y
-  );
-  ctx.lineTo(
-    M.normal.x * (_A.shape.radius + 8) + _A.transform.position.x,
-    M.normal.y * (_A.shape.radius + 8) + _A.transform.position.y
-  );
-  ctx.stroke();
-
-  return true;
-}
-
-function AABBvsCircle(_M) {
-  let _A = _M.A;
-  let _B = _M.B;
-
-  normal = new Vec2(
-    _B.transform.position.x - _A.transform.position.x,
-    _B.transform.position.y - _A.transform.position.y
-  );
-
-  closest = new Vec2(normal.x, normal.y);
-
-  x_extent = (_A.shape.max.x - _A.shape.min.x) / 2;
-  y_extent = (_A.shape.max.y - _A.shape.min.y) / 2;
-
-  closest.x = Math.max(-x_extent, Math.min(x_extent, closest.x));
-  closest.y = Math.max(-y_extent, Math.min(y_extent, closest.y));
-
-  inside = false;
-
-  if (normal.x == closest.x && normal.y == closest.y) {
-    inside = true;
-    if (Math.abs(normal.x) > Math.abs(normal.y)) {
-      if (closest.x > 0) {
-        closest.x = x_extent;
-      } else {
-        closest.x = -x_extent;
-      }
-    } else {
-      if (closest.y > 0) {
-        closest.y = y_extent;
-      } else {
-        closest.y = -y_extent;
-      }
-    }
-  }
-
-  normal = new Vec2(normal.x - closest.x, normal.y - closest.y);
-  // ctx.beginPath();
-  // ctx.moveTo(
-  //   normal.x * _A.shape.radius + _A.transform.position.x,
-  //   normal.y * _A.shape.radius + _A.transform.position.y
-  // );
-  // ctx.lineTo(
-  //   normal.x * (_A.shape.radius + 8) + _A.transform.position.x,
-  //   normal.y * (_A.shape.radius + 8) + _A.transform.position.y
-  // );
-  // ctx.stroke();
-
-  distance = normal.x ** 2 + normal.y ** 2;
-
-  if (distance > _B.shape.radius ** 2 && !inside) {
-    return false;
-  }
-
-  distance = Math.sqrt(distance);
-
-  if (inside) {
-    M.normal = -normal.normalize();
-    M.penetrationDepth = _B.shape.radius - distance;
-  } else {
-    M.normal = normal.normalize();
-    M.penetrationDepth = _B.shape.radius - distance;
-  }
   return true;
 }
 
@@ -426,9 +370,19 @@ function arrayContainVector(Array, object) {
       object.y == 0;
     }
 
-    if (Array[i].x == object.x && Array[i].y == object.y) {
+    if (
+      almostEqual(Array[i].x, object.x) &&
+      almostEqual(Array[i].y, object.y)
+    ) {
       return true;
     }
+  }
+  return false;
+}
+
+function almostEqual(a, b) {
+  if (Math.abs(a - b) < 0.01) {
+    return true;
   }
   return false;
 }
@@ -436,7 +390,7 @@ function arrayContainVector(Array, object) {
 function SAT_recieveNormals(A_translatedVertices, B_translatedVertices) {
   let normals = [new Vec2(1, 0), new Vec2(0, 1)];
 
-  for (let i = 1; i < A_translatedVertices.length; i++) {
+  for (let i = 0; i < A_translatedVertices.length; i++) {
     let axis = new Vec2(
       A_translatedVertices[(i + 1) % A_translatedVertices.length][0] -
         A_translatedVertices[i][0],
@@ -453,7 +407,7 @@ function SAT_recieveNormals(A_translatedVertices, B_translatedVertices) {
     }
   }
 
-  for (let i = 1; i < B_translatedVertices.length; i++) {
+  for (let i = 0; i < B_translatedVertices.length; i++) {
     let axis = new Vec2(
       B_translatedVertices[(i + 1) % B_translatedVertices.length][0] -
         B_translatedVertices[i][0],
@@ -472,11 +426,26 @@ function SAT_recieveNormals(A_translatedVertices, B_translatedVertices) {
   return normals;
 }
 
+function drawCircle(position, radius, color) {
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(position.x, position.y, radius, 0, 2 * Math.PI);
+  ctx.fill();
+}
+
+function IntervalDistance(minA, maxA, minB, maxB) {
+  if (minA > minB) {
+    return minB - maxA;
+  } else {
+    return minA - maxB;
+  }
+}
+
 function SAT(_M) {
   let _A = _M.A;
   let _B = _M.B;
 
-  normal = _B.transform.position.subtract(_A.transform.position);
+  let normal = _B.transform.position.subtract(_A.transform.position);
 
   let A_translatedVertices = translateMat(
     MAT22xMAT22(_A.shape.vertices, rotationMat(_A.transform.rotation)),
@@ -495,17 +464,15 @@ function SAT(_M) {
   for (let i = 0; i < axisList.length; i++) {
     const axis = axisList[i];
 
-    a_extent =
-      (DotProduct(GetSupport(A_translatedVertices, axis), axis) -
-        DotProduct(GetSupport(A_translatedVertices, axis.mult(-1)), axis)) /
-      2;
+    a_min = DotProduct(GetSupport(A_translatedVertices, axis.mult(1)), axis);
 
-    b_extent =
-      (DotProduct(GetSupport(B_translatedVertices, axis), axis) -
-        DotProduct(GetSupport(B_translatedVertices, axis.mult(-1)), axis)) /
-      2;
+    a_max = DotProduct(GetSupport(A_translatedVertices, axis.mult(-1)), axis);
 
-    overlap = b_extent + a_extent - Math.abs(DotProduct(normal, axis));
+    b_min = DotProduct(GetSupport(B_translatedVertices, axis.mult(1)), axis);
+
+    b_max = DotProduct(GetSupport(B_translatedVertices, axis.mult(-1)), axis);
+
+    overlap = IntervalDistance(a_min, a_max, b_min, b_max);
 
     if (overlap < 0) {
       return false;
@@ -513,64 +480,91 @@ function SAT(_M) {
     overlapList.push(overlap);
   }
 
-  M.penetrationDepth = Math.min(...overlapList);
+  _M.penetrationDepth = Math.min(...overlapList);
 
   axis = axisList[overlapList.indexOf(M.penetrationDepth)];
 
   if (DotProduct(normal, axis) < 0) {
-    M.normal = axis.mult(-1);
+    _M.normal = axis.mult(-1);
   } else {
-    M.normal = axis;
+    _M.normal = axis;
   }
 
   return true;
 }
 
-function distanceFromPointToLineSqrd(v, w, p) {
-  v = new Vec2(v[0], v[1]);
-  w = new Vec2(w[0], w[1]);
-  p = new Vec2(p[0], p[1]);
+function CirclevsOBB(_M) {
+  let _A = _M.A;
+  let _B = _M.B;
 
-  return (
-    ((w.x - v.x) * (v.y - p.y) - (v.x - p.x) * (w.y - v.y)) ** 2 /
-    ((w.x - v.x) ** 2 + (w.y - v.x) ** 2)
+  vertices = translateMat(
+    MAT22xMAT22(_B.shape.vertices, rotationMat(_B.transform.rotation)),
+    _B.transform.position
   );
-}
 
-function pDistance(x, y, x1, y1, x2, y2) {
-  var A = x - x1;
-  var B = y - y1;
-  var C = x2 - x1;
-  var D = y2 - y1;
+  let closestDist = Infinity;
+  let closestPoint;
 
-  var dot = A * C + B * D;
-  var len_sq = C * C + D * D;
-  var param = -1;
-  if (len_sq != 0)
-    //in case of 0 length line
-    param = dot / len_sq;
+  normals = [];
+  faces = [];
+  collisionNormal = new Vec2(
+    _A.transform.position.x - _B.transform.position.x,
+    _A.transform.position.y - _B.transform.position.y
+  );
 
-  var xx, yy;
+  for (let i = 0; i < vertices.length; i++) {
+    vertex_A = new Vec2(vertices[i][0], vertices[i][1]);
+    vertex_B = new Vec2(
+      vertices[(i + 1) % vertices.length][0],
+      vertices[(i + 1) % vertices.length][1]
+    );
 
-  if (param < 0) {
-    xx = x1;
-    yy = y1;
-  } else if (param > 1) {
-    xx = x2;
-    yy = y2;
-  } else {
-    xx = x1 + param * C;
-    yy = y1 + param * D;
+    face_normal = new Vec2(vertex_B.x - vertex_A.x, vertex_B.y - vertex_A.y)
+      .normalize()
+      .normal()
+      .mult(-1);
+
+    if (DotProduct(collisionNormal, face_normal) > 0) {
+      // drawLine(vertex_A, face_normal, 20, "red");
+
+      faces.push([vertex_A, vertex_B, face_normal]);
+    }
   }
 
-  var dx = x - xx;
-  var dy = y - yy;
-  return dx * dx + dy * dy;
-}
+  for (let i = 0; i < faces.length; i++) {
+    distSqrd = pDistance(
+      _A.transform.position.x,
+      _A.transform.position.y,
+      faces[i][0].x,
+      faces[i][0].y,
+      faces[i][1].x,
+      faces[i][1].y
+    );
+    if (distSqrd[0] < closestDist) {
+      closestDist = distSqrd[0];
+      closestPoint = distSqrd[1];
+    }
 
-// function nearlyEqual(a, b) {
-//   return Math.abs(b - a) < 1;
-// }
+    if (closestDist < _A.shape.radius ** 2) {
+      normal = new Vec2(
+        closestPoint.x - _A.transform.position.x,
+        closestPoint.y - _A.transform.position.y
+      ).normalize();
+
+      penetrationDepth = _A.shape.radius - Math.sqrt(closestDist);
+
+      _M.penetrationDepth = penetrationDepth;
+      _M.normal = normal;
+      _M.contactCount = 1;
+      _M.contactPoints = [closestPoint];
+
+      // drawLine(closestPoint, _M.normal, 10, "red");
+
+      return true;
+    }
+  }
+  return false;
+}
 
 function findContactPoints(_M) {
   // Only runs if collision
@@ -578,109 +572,125 @@ function findContactPoints(_M) {
   _A = _M.A;
   _B = _M.B;
 
-  let A_translatedVertices = translateMat(
-    MAT22xMAT22(_A.shape.vertices, rotationMat(_A.transform.rotation)),
-    _A.transform.position
-  );
+  //CIRCLE
 
-  let B_translatedVertices = translateMat(
-    MAT22xMAT22(_B.shape.vertices, rotationMat(_B.transform.rotation)),
-    _B.transform.position
-  );
+  if (_A.shape.type == "Circle" && _B.shape.type == "Circle") {
+    ctx.strokeStyle = "red";
 
-  let closestDist = Infinity;
+    contact1 = new Vec2(
+      _M.normal.x * _A.shape.radius + _A.transform.position.x,
+      _M.normal.y * _A.shape.radius + _A.transform.position.y
+    );
 
-  let contact1;
-  let contact2;
-  let pointCount;
-
-  for (let i = 0; i < A_translatedVertices.length; i++) {
-    point = A_translatedVertices[i];
-
-    for (let j = 0; j < B_translatedVertices.length; j++) {
-      edgePointA = B_translatedVertices[j];
-      edgePointB = B_translatedVertices[(j + 1) % B_translatedVertices.length];
-
-      distance = pDistance(
-        point[0],
-        point[1],
-        edgePointA[0],
-        edgePointA[1],
-        edgePointB[0],
-        edgePointB[1]
-      );
-
-      if (Math.abs(distance - closestDist) < 0.01) {
-        if (point[0] != contact1[0] && point[1] != contact1[1]) {
-          contact2 = point;
-          pointCount = 2;
-        }
-      } else if (distance < closestDist) {
-        closestDist = distance;
-        contact1 = point;
-        pointCount = 1;
-      }
-    }
-  }
-
-  for (let i = 0; i < B_translatedVertices.length; i++) {
-    point = B_translatedVertices[i];
-
-    for (let j = 0; j < A_translatedVertices.length; j++) {
-      edgePointA = A_translatedVertices[j];
-      edgePointB = A_translatedVertices[(j + 1) % A_translatedVertices.length];
-
-      distance = pDistance(
-        point[0],
-        point[1],
-        edgePointA[0],
-        edgePointA[1],
-        edgePointB[0],
-        edgePointB[1]
-      );
-
-      if (Math.abs(distance - closestDist) < 0.01) {
-        if (point[0] != contact1[0] && point[1] != contact1[1]) {
-          contact2 = point;
-          pointCount = 2;
-        }
-      } else if (distance < closestDist) {
-        closestDist = distance;
-        contact1 = point;
-        pointCount = 1;
-      }
-    }
-  }
-
-  ctx.strokeStyle = "red";
-
-  if (pointCount == 1) {
-    ctx.beginPath();
-    ctx.moveTo(contact1[0], contact1[1]);
-    ctx.lineTo(contact1[0] + _M.normal.x * 10, contact1[1] + _M.normal.y * 10);
-    ctx.stroke();
-    contact1 = new Vec2(contact1[0], contact1[1]);
-    _M.contactPoints = [contact1];
     _M.contactCount = 1;
+    _M.contactPoints = [contact1];
 
     return;
-  } else if (pointCount == 2) {
-    ctx.beginPath();
-    ctx.moveTo(contact1[0], contact1[1]);
-    ctx.lineTo(contact1[0] + _M.normal.x * 10, contact1[1] + _M.normal.y * 10);
-    ctx.stroke();
+  }
 
-    ctx.beginPath();
-    ctx.moveTo(contact2[0], contact2[1]);
-    ctx.lineTo(contact2[0] + _M.normal.x * 10, contact2[1] + _M.normal.y * 10);
-    ctx.stroke();
-    contact1 = new Vec2(contact1[0], contact1[1]);
-    contact2 = new Vec2(contact2[0], contact2[1]);
+  //CIRCLE and OBB
 
-    _M.contactPoints = [contact1, contact2];
-    _M.contactCount = 2;
+  if (_A.shape.type == "OBB" && _B.shape.type == "OBB") {
+    //OBB
 
-    return;
+    let A_translatedVertices = translateMat(
+      MAT22xMAT22(_A.shape.vertices, rotationMat(_A.transform.rotation)),
+      _A.transform.position
+    );
+
+    let B_translatedVertices = translateMat(
+      MAT22xMAT22(_B.shape.vertices, rotationMat(_B.transform.rotation)),
+      _B.transform.position
+    );
+
+    let closestDist = Infinity;
+
+    let contact1;
+    let contact2;
+    let pointCount;
+
+    for (let i = 0; i < A_translatedVertices.length; i++) {
+      point = A_translatedVertices[i];
+
+      for (let j = 0; j < B_translatedVertices.length; j++) {
+        edgePointA = B_translatedVertices[j];
+        edgePointB =
+          B_translatedVertices[(j + 1) % B_translatedVertices.length];
+
+        distance = pDistance(
+          point[0],
+          point[1],
+          edgePointA[0],
+          edgePointA[1],
+          edgePointB[0],
+          edgePointB[1]
+        )[0];
+
+        if (Math.abs(distance - closestDist) < 0.01) {
+          if (point[0] != contact1[0] && point[1] != contact1[1]) {
+            contact2 = point;
+            pointCount = 2;
+          }
+        } else if (distance < closestDist) {
+          closestDist = distance;
+          contact1 = point;
+          pointCount = 1;
+        }
+      }
+    }
+
+    for (let i = 0; i < B_translatedVertices.length; i++) {
+      point = B_translatedVertices[i];
+
+      for (let j = 0; j < A_translatedVertices.length; j++) {
+        edgePointA = A_translatedVertices[j];
+        edgePointB =
+          A_translatedVertices[(j + 1) % A_translatedVertices.length];
+
+        distance = pDistance(
+          point[0],
+          point[1],
+          edgePointA[0],
+          edgePointA[1],
+          edgePointB[0],
+          edgePointB[1]
+        )[0];
+
+        if (Math.abs(distance - closestDist) < 0.01) {
+          if (point[0] != contact1[0] && point[1] != contact1[1]) {
+            contact2 = point;
+            pointCount = 2;
+          }
+        } else if (distance < closestDist) {
+          closestDist = distance;
+          contact1 = point;
+          pointCount = 1;
+        }
+      }
+    }
+
+    ctx.strokeStyle = "red";
+
+    if (pointCount == 1) {
+      contact1 = new Vec2(contact1[0], contact1[1]);
+
+      // drawLine(contact1, _M.normal, 10, "red");
+
+      _M.contactPoints = [contact1];
+      _M.contactCount = 1;
+      return;
+    } else if (pointCount == 2) {
+      contact1 = new Vec2(contact1[0], contact1[1]);
+      contact2 = new Vec2(contact2[0], contact2[1]);
+
+      // drawLine(contact1, _M.normal, 10, "red");
+      contact2, _M.normal, 10, "red";
+
+      _M.contactPoints = [contact1, contact2];
+      _M.contactCount = 2;
+
+      return;
+    }
   }
 }
 
@@ -692,9 +702,10 @@ function collisionResolve(_M) {
   let _A = _M.A;
   let _B = _M.B;
 
+  if (!_M.contactPoints) {
+    findContactPoints(_M);
+  }
   PositionalCorrection(_M);
-
-  findContactPoints(_M);
 
   let normal = _M.normal;
 
@@ -705,7 +716,7 @@ function collisionResolve(_M) {
     ctx.fillStyle = "red";
     ctx.beginPath();
     ctx.arc(contactPoint.x, contactPoint.y, 2, 0, Math.PI * 2);
-    ctx.fill();
+    // ctx.fill();
   }
 
   e = Math.min(_A.material.restitution, _B.material.restitution);
@@ -784,9 +795,6 @@ function collisionResolve(_M) {
         _B.shape.frictionCoefficientDynamic) /
       2;
 
-    console.log(Math.abs(jt) < j);
-    console.log(0);
-
     if (Math.abs(jt) < j * sf) {
       tangentImpulse = t.mult(jt);
     } else {
@@ -810,11 +818,12 @@ function applyImpulse(Object, impulse, contactVector) {
 function PositionalCorrection(_M) {
   a = _M.A;
   b = _M.B;
+
   normal = _M.normal;
   penetrationDepth = _M.penetrationDepth;
 
-  percent = 0.8; // usually 20% to 80%
-  buffer = 0.05;
+  percent = 1; // usually 20% to 80%
+  buffer = 0.01;
 
   correction = normal.mult(
     (Math.max(penetrationDepth - buffer, 0) /
@@ -835,6 +844,10 @@ function PositionalCorrection(_M) {
   );
 }
 
+let drawList = [];
+
+let i = 0;
+
 class Manifold {
   A;
   B;
@@ -844,86 +857,188 @@ class Manifold {
   contactPoints;
 
   constructor(_A, _B) {
-    this.A = _A;
-    this.B = _B;
+    if (_A.shape.type == "Circle") {
+      this.A = _A;
+      this.B = _B;
+    } else {
+      this.A = _B;
+      this.B = _A;
+    }
   }
 
   update() {
     if (this.A.mass == 0 && this.B.mass == 0) {
       return;
     }
-    // if (this.A.shape.type == "AABB" && this.B.shape.type == "AABB") {
-    //   if (AABBvsAABB(this)) {
-    //     ResolveCollision(this);
-    //   }
-    // }
+    if (this.A.type == this.B.type) {
+      if (this.A.type !== "box") {
+        return;
+      }
+    }
 
     // if (this.A.shape.type == "Circle" && this.B.shape.type == "Circle") {
-
-    if (SAT(this)) {
-      collisionResolve(this);
+    if (this.A.shape.type == "OBB" && this.B.shape.type == "OBB") {
+      if (SAT(this)) {
+        collisionResolve(this);
+      }
     }
     // }
 
     if (this.A.shape.type == "Circle" && this.B.shape.type == "Circle") {
       if (CirclevsCircle(this)) {
-        ResolveCollision(this);
+        collisionResolve(this);
       }
     }
 
-    if (this.A.shape.type == "AABB" && this.B.shape.type == "Circle") {
-      if (AABBvsCircle(this)) {
-        ResolveCollision(this);
+    if (this.A.shape.type == "Circle" && this.B.shape.type == "OBB") {
+      if (CirclevsOBB(this)) {
+        collisionResolve(this);
       }
     }
   }
 }
 
-A = new body(new OBB(1000, 10), 500, 580, "Static", 0);
-A.mass_data.inertia = 0;
-A.mass_data.inverse_inertia = 0;
+new rigidbody(
+  new OBB(
+    [
+      [0, 1],
+      [30, 1],
+      [30, 0],
+      [0, 0],
+    ],
+    30
+  ),
+  500,
+  500,
+  "Static",
+  0
+);
 
-new body(new OBB(150, 10), 300, 200, "Static", 0);
-objects[objects.length - 1].mass_data.inertia = 0;
-objects[objects.length - 1].mass_data.inverse_inertia = 0;
-objects[objects.length - 1].transform.rotation = -0.4;
+mousePos = new Vec2(0, 0);
 
-new body(new OBB(150, 10), 550, 300, "Static", 0);
-objects[objects.length - 1].mass_data.inertia = 0;
-objects[objects.length - 1].mass_data.inverse_inertia = 0;
-objects[objects.length - 1].transform.rotation = 0.4;
-
-// new body(new OBB(20, 20), 600, 400, "Rock", 1);
-
-// A = new body(new OBB(20, 20), 300, 300, "Rock", 1);
-A.transform.rotation = 0;
-
-// B = new body(new OBB(20, 20), 500, 500, "Rock", 1);
-// B.transform.rotation = 1;
-
-mousePos = { x: 0, y: 0 };
+// B = new rigidbody(
+//   new OBB(
+//     [
+//       [0, 1],
+//       [1, 1],
+//       [1, 0],
+//       [0, 0],
+//     ],
+//     30
+//   ),
+//   550,
+//   300,
+//   "Static",
+//   "box"
+// );
 
 document.addEventListener("mousemove", function (e) {
   mousePos.x = e.offsetX;
   mousePos.y = e.offsetY;
-  // B.transform.position = new Vec2(mousePos.x, mousePos.y);
+  // B.transform.position = mousePos;
 });
 
 document.addEventListener("mousedown", function (e) {
   // B.linearVelocity.x += 10;
+  if (currentType == "Circle") {
+    new rigidbody(
+      new Circle(Math.random() * 25 + 10),
+      mousePos.x,
+      mousePos.y,
+      "Rock",
+      "box"
+    );
+    objects[objects.length - 1].transform.rotation =
+      Math.random() * 2 * Math.PI;
+  }
+  if (currentType == "OBB1") {
+    new rigidbody(
+      new OBB(
+        [
+          [0, 2],
+          [5, 2],
+          [6, 0],
+          [4, -1],
+          [2, -1],
+          [0, 0],
+        ],
+        20
+      ),
+      mousePos.x,
+      mousePos.y,
+      "Rock",
+      "box"
+    );
+  }
 
-  new body(
-    new OBB(Math.random() * 15 + 5, Math.random() * 15 + 5),
-    mousePos.x,
-    mousePos.y,
-    "Rock",
-    1
-  );
-  objects[objects.length - 1].transform.rotation = Math.random() * 2 * Math.PI;
+  if (currentType == "OBB2") {
+    for (let i = 0; i < 10; i++) {
+      new rigidbody(
+        new OBB(
+          [
+            [0, 1],
+            [1, 1],
+            [1, 0],
+            [0, 0],
+          ],
+          20
+        ),
+        mousePos.x + Math.random() * 50 - 25,
+        mousePos.y + Math.random() * 50 - 25,
+        "Rock",
+        "box"
+      );
+      objects[objects.length - 1].transform.rotation = Math.random() * 50;
+    }
+  }
+});
+
+class car {
+  rb;
+
+  constructor(x, y) {
+    this.rb = new rigidbody(
+      new OBB(
+        [
+          [0, 1],
+          [3, 1],
+          [3, 0],
+          [0, 0],
+        ],
+        30
+      ),
+      x,
+      y,
+      new material_data("metal"),
+      "car"
+    );
+  }
+}
+
+document.addEventListener("keydown", function (e) {
+  if (e.key == "h") {
+    currentType = "Circle";
+  }
+  if (e.key == "j") {
+    currentType = "OBB1";
+  }
+  if (e.key == "k") {
+    currentType = "OBB2";
+  }
+  if (e.key == "d") {
+    Car.rb.linearVelocity.x += 0.1;
+  }
+  if (e.key == "a") {
+    Car.rb.linearVelocity.x -= 0.1;
+  }
+
+  if (e.key == "x") {
+    breakObject(objects[objects.length - 1]);
+  }
 });
 
 function clear() {
-  ctx.fillStyle = "white";
+  ctx.fillStyle = "#262626";
   ctx.beginPath();
   ctx.rect(0, 0, 1000, 600);
   ctx.fill();
@@ -946,18 +1061,24 @@ function checkIfQueueContainsObjects(Queue, Objects) {
 
   return false;
 }
+
 function gameLoop() {
   newTime = Date.now() / 1000;
   dt = newTime - oldTime;
-  dt = 1;
+  // dt = 1;
   oldTime = Date.now() / 1000;
   clear();
-
+  drawList.forEach((Object) => {
+    ctx.fillStyle = "blue ";
+    ctx.beginPath();
+    ctx.arc(Object.x, Object.y, 3, 0, 2 * Math.PI);
+    ctx.fill();
+  });
   objects.forEach((Object) => {
     Object.update();
     Object.draw();
 
-    Object.force.y += 0.003;
+    Object.force.y += 100 * Object.mass_data.mass;
 
     objects.forEach((other) => {
       if (
@@ -971,7 +1092,6 @@ function gameLoop() {
 
   // M = new Manifold(A, B);
   // M.update();
-
   physicsQueue.forEach((Queue) => {
     M = new Manifold(Queue[0], Queue[1]);
     M.update();
